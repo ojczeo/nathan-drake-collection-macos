@@ -204,8 +204,102 @@ final class LauncherModel: ObservableObject {
     private var logFileLength = 0
     private var seenLogLines: [String: Int] = [:]
 
+    /// macOS or the processor rule the Mac out; a missing Rosetta 2 can be installed from the prompt.
+    @Published var rosettaMissing = false
+    private var rosettaPrompted = false
+    private var installingRosetta = false
+
+    func checkRuntime() {
+        let hard = runtimeRequirement()
+        rosettaMissing = hard == nil && !rosettaInstalled()
+        runtimeBlock = hard ?? (rosettaMissing ? "Rosetta 2 is not installed. Install it to play." : nil)
+        if hard == nil && !rosettaMissing && status.hasPrefix("Rosetta 2") {
+            status = dumpURL == nil ? "Choose the game folder you own." : "Choose a game."
+        }
+    }
+
+    /// The start-up prompt when Rosetta 2 is missing (once per launch).
+    func offerRosetta() {
+        checkRuntime()
+        guard rosettaMissing, !rosettaPrompted, !installingRosetta else { return }
+        rosettaPrompted = true
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Rosetta 2 is needed to run the games."
+        alert.informativeText = "The game engine is built for Intel processors and runs on Apple Silicon through Rosetta 2. Install it now (your administrator password is asked), or run this command in Terminal:\n\n\(rosettaInstallCommand)"
+        alert.addButton(withTitle: "Install Rosetta 2")
+        alert.addButton(withTitle: "Copy Command")
+        alert.addButton(withTitle: "Not Now")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            installRosetta()
+        case .alertSecondButtonReturn:
+            copyRosettaCommand()
+            status = "Rosetta 2 is not installed. The install command is copied; run it in Terminal."
+        default:
+            status = "Rosetta 2 is not installed. Play stays off until it is."
+        }
+    }
+
+    func copyRosettaCommand() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(rosettaInstallCommand, forType: .string)
+    }
+
+    private func installRosetta() {
+        installingRosetta = true
+        status = "Installing Rosetta 2…"
+        if simulateMissingRosetta {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1))
+                simulatedRosettaInstalled = true
+                self.rosettaInstallFinished(status: 0, output: "")
+            }
+            return
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", "do shell script \"/usr/sbin/\(rosettaInstallCommand)\" with administrator privileges"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        process.terminationHandler = { [weak self] ended in
+            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            Task { @MainActor in
+                self?.rosettaInstallFinished(status: ended.terminationStatus, output: output)
+            }
+        }
+        do {
+            try process.run()
+        } catch {
+            rosettaInstallFinished(status: -1, output: error.localizedDescription)
+        }
+    }
+
+    private func rosettaInstallFinished(status code: Int32, output: String) {
+        installingRosetta = false
+        checkRuntime()
+        if !rosettaMissing {
+            status = dumpURL == nil ? "Rosetta 2 is installed. Choose the game folder you own." : "Rosetta 2 is installed. Choose a game."
+            return
+        }
+        status = "Rosetta 2 is not installed."
+        // osascript reports a cancelled password prompt as error -128.
+        if output.contains("-128") { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Rosetta 2 could not be installed."
+        let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        alert.informativeText = (detail.isEmpty ? "" : detail + "\n\n") + "You can run this command in Terminal instead:\n\n\(rosettaInstallCommand)"
+        alert.addButton(withTitle: "Copy Command")
+        alert.addButton(withTitle: "Close")
+        if alert.runModal() == .alertFirstButtonReturn {
+            copyRosettaCommand()
+        }
+    }
+
     func restore() {
-        runtimeBlock = runtimeRequirement()
+        checkRuntime()
         loadSettings()
         detectNative()
         if let url = restoreBookmark("dumpBookmark") {
@@ -459,7 +553,7 @@ final class LauncherModel: ObservableObject {
         } onExit: { [weak self] _ in
             guard let self else { return }
             if self.games.allSatisfy(\.available) {
-                self.status = self.gameVersion.isEmpty ? "Choose a game." : "Version \(self.gameVersion). Choose a game."
+                self.status = "Choose a game."
             } else if self.games.contains(where: \.available) {
                 self.status = "Some of the game files are missing."
             } else {
@@ -715,14 +809,25 @@ private func runtimeRequirement() -> String? {
     if !machine.hasPrefix("arm") {
         return "This build needs Apple Silicon (M1 or newer). Intel Macs are not supported."
     }
-    let rosetta = [
+    return nil
+}
+
+/// The command that installs Rosetta 2 (shown, copied, or run with an administrator prompt).
+let rosettaInstallCommand = "softwareupdate --install-rosetta --agree-to-license"
+
+/// NDC_SIMULATE_MISSING=rosetta: report Rosetta 2 missing (and make installing a dry run), to test
+/// the prompt on a Mac that has it.
+private let simulateMissingRosetta =
+    ProcessInfo.processInfo.environment["NDC_SIMULATE_MISSING"]?.split(separator: ",").contains("rosetta") == true
+
+@MainActor private var simulatedRosettaInstalled = false
+
+@MainActor func rosettaInstalled() -> Bool {
+    if simulateMissingRosetta { return simulatedRosettaInstalled }
+    return [
         "/Library/Apple/usr/libexec/oah/libRosettaRuntime",
         "/usr/libexec/rosetta",
     ].contains { FileManager.default.fileExists(atPath: $0) }
-    if !rosetta {
-        return "Rosetta 2 is required. Install it with: softwareupdate --install-rosetta --agree-to-license"
-    }
-    return nil
 }
 
 private final class LineBuffer: @unchecked Sendable {
@@ -1470,13 +1575,20 @@ struct NathanDrakeCollectionApp: App {
                         }
                         return nil
                     }
-                    if let reason = model.runtimeBlock {
+                    model.checkRuntime()
+                    if model.rosettaMissing {
+                        DispatchQueue.main.async { model.offerRosetta() }
+                    } else if let reason = model.runtimeBlock {
                         let alert = NSAlert()
                         alert.alertStyle = .critical
                         alert.messageText = "This Mac cannot run the games."
                         alert.informativeText = reason
                         alert.runModal()
                     }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    // Rosetta 2 may have been installed from Terminal meanwhile.
+                    if model.rosettaMissing { model.checkRuntime() }
                 }
         }
         .defaultSize(width: 760, height: 560)
