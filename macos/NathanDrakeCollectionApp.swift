@@ -43,6 +43,9 @@ struct PortSettings: Codable, Equatable {
     var showLog = false
     var metalHUD = false
     var logLevel = "normal"
+    /// Launcher options: each game keeps its own settings (games) and has its own settings window.
+    var perGame = false
+    var games: [String: PortSettings]?
 
     enum CodingKeys: String, CodingKey {
         case qualityPreset = "quality_preset"
@@ -59,6 +62,8 @@ struct PortSettings: Codable, Equatable {
         case showLog = "show_log"
         case metalHUD = "metal_hud"
         case logLevel = "log_level"
+        case perGame = "per_game"
+        case games
     }
 
     init() {}
@@ -88,6 +93,62 @@ struct PortSettings: Codable, Equatable {
         showLog = try box.decodeIfPresent(Bool.self, forKey: .showLog) ?? false
         metalHUD = try box.decodeIfPresent(Bool.self, forKey: .metalHUD) ?? false
         logLevel = try box.decodeIfPresent(String.self, forKey: .logLevel) ?? "normal"
+        perGame = try box.decodeIfPresent(Bool.self, forKey: .perGame) ?? false
+        games = try box.decodeIfPresent([String: PortSettings].self, forKey: .games)
+    }
+
+    /// These settings as one game's own copy (without the per-game switch and table).
+    var gameCopy: PortSettings {
+        var copy = self
+        copy.perGame = false
+        copy.games = nil
+        return copy
+    }
+
+    mutating func applyPreset(_ name: String) {
+        qualityPreset = name
+        switch name {
+        case "low":
+            resolution = "1920x1080"
+            upscaler = "fsr1"
+            upscale = "performance"
+            aa = "off"
+            fpsLimit = "60"
+            rcas = true
+            rcasStrength = "75"
+        case "high":
+            resolution = "2560x1440"
+            upscaler = "off"
+            upscale = "off"
+            fpsLimit = "60"
+            rcas = true
+            rcasStrength = "50"
+        case "ultra":
+            resolution = "3840x2160"
+            upscaler = "off"
+            upscale = "off"
+            fpsLimit = "120"
+            rcas = true
+            rcasStrength = "50"
+        default:
+            qualityPreset = "medium"
+            resolution = "1920x1080"
+            upscaler = "off"
+            upscale = "off"
+            aa = "off"
+            fpsLimit = "60"
+            rcas = true
+            rcasStrength = "75"
+        }
+        framesQueued = "1"
+        vsync = true
+        asyncShaders = true
+    }
+
+    mutating func markCustom() {
+        if qualityPreset != "custom" {
+            qualityPreset = "custom"
+        }
     }
 }
 
@@ -110,8 +171,20 @@ final class LauncherModel: ObservableObject {
     @Published var nativeReady = false
     @Published var showCredits = false
     @Published var showGameSettings = false
-    @Published var settings = PortSettings()
+    @Published var settings = PortSettings() {
+        didSet { if settings != oldValue { saveSettings() } }
+    }
+    /// The game whose settings window the menu bar asked for (per-game settings).
+    @Published var gameSettingsRequest: String?
     @Published var runtimeBlock: String?
+
+    /// The bundled BilalReloaded port's version (native/PORT_VERSION, written by build_app.sh).
+    nonisolated static var portVersion: String? {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("native/PORT_VERSION"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let version = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return version.isEmpty ? nil : version
+    }
 
     nonisolated static var appVersion: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -288,52 +361,27 @@ final class LauncherModel: ObservableObject {
         NSWorkspace.shared.open(folder)
     }
 
-    func applyPreset(_ name: String) {
-        settings.qualityPreset = name
-        switch name {
-        case "low":
-            settings.resolution = "1920x1080"
-            settings.upscaler = "fsr1"
-            settings.upscale = "performance"
-            settings.aa = "off"
-            settings.fpsLimit = "60"
-            settings.rcas = true
-            settings.rcasStrength = "75"
-        case "high":
-            settings.resolution = "2560x1440"
-            settings.upscaler = "off"
-            settings.upscale = "off"
-            settings.fpsLimit = "60"
-            settings.rcas = true
-            settings.rcasStrength = "50"
-        case "ultra":
-            settings.resolution = "3840x2160"
-            settings.upscaler = "off"
-            settings.upscale = "off"
-            settings.fpsLimit = "120"
-            settings.rcas = true
-            settings.rcasStrength = "50"
-        default:
-            settings.qualityPreset = "medium"
-            settings.resolution = "1920x1080"
-            settings.upscaler = "off"
-            settings.upscale = "off"
-            settings.aa = "off"
-            settings.fpsLimit = "60"
-            settings.rcas = true
-            settings.rcasStrength = "75"
-        }
-        settings.framesQueued = "1"
-        settings.vsync = true
-        settings.asyncShaders = true
-        saveSettings()
+    /// The settings one game starts with: its own copy when each game has its own settings.
+    func settings(for gameID: String) -> PortSettings {
+        settings.perGame ? (settings.games?[gameID] ?? settings.gameCopy) : settings
     }
 
-    func markCustom() {
-        if settings.qualityPreset != "custom" {
-            settings.qualityPreset = "custom"
+    func setSettings(_ value: PortSettings, for gameID: String) {
+        var games = settings.games ?? [:]
+        games[gameID] = value.gameCopy
+        settings.games = games
+    }
+
+    /// Turning separate settings on gives each game without its own copy the current settings.
+    func setPerGame(_ on: Bool) {
+        if on {
+            var games = settings.games ?? [:]
+            for game in self.games where games[game.id] == nil {
+                games[game.id] = settings.gameCopy
+            }
+            settings.games = games
         }
-        saveSettings()
+        settings.perGame = on
     }
 
     private func adoptDump(_ url: URL, announce: Bool = false) {
@@ -872,12 +920,14 @@ struct ContentView: View {
                         }
                     }
                     Spacer(minLength: 12)
-                    Button("Game Settings") {
-                        openWindow(id: "game-settings")
+                    if !model.settings.perGame {
+                        Button("Game Settings") {
+                            openWindow(id: "game-settings")
+                        }
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 168, height: 44)
+                        .controlSize(.large)
                     }
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(width: 168, height: 44)
-                    .controlSize(.large)
                 }
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(model.games) { game in
@@ -901,6 +951,11 @@ struct ContentView: View {
                             .labelsHidden()
                             .frame(maxWidth: 280)
                         }
+                        Toggle("Separate settings window for each game", isOn: Binding(
+                            get: { model.settings.perGame },
+                            set: { model.setPerGame($0) }
+                        ))
+                        if !model.settings.perGame {
                         HStack {
                             Text("Start the game in")
                             Picker("Start the game in", selection: $model.settings.displayMode) {
@@ -911,6 +966,7 @@ struct ContentView: View {
                             .pickerStyle(.segmented)
                             .labelsHidden()
                             .frame(maxWidth: 420)
+                        }
                         }
                         HStack {
                             Text("Logging")
@@ -960,7 +1016,8 @@ struct ContentView: View {
                     }
                 }
                 HStack {
-                    Text("Version \(LauncherModel.appVersion)")
+                    Text("Version \(LauncherModel.appVersion)" +
+                         (LauncherModel.portVersion.map { " · port \($0)" } ?? ""))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -1004,6 +1061,12 @@ struct ContentView: View {
             if model.settings.appearance == "system" { applyAppearance() }
         }
         .onChange(of: model.settings) { _, _ in model.saveSettings() }
+        .onChange(of: model.gameSettingsRequest) { _, gameID in
+            if let gameID {
+                openWindow(id: "game-settings-game", value: gameID)
+                model.gameSettingsRequest = nil
+            }
+        }
         .onChange(of: model.showGameSettings) { _, show in
             if show {
                 openWindow(id: "game-settings")
@@ -1062,14 +1125,29 @@ struct ContentView: View {
         VStack(spacing: 8) {
             cover(game)
                 .opacity(game.available ? 1 : 0.35)
-            PlayButton(
-                stopping: model.runningGameID == game.id,
-                disabled: updates.busy || (model.runningGameID != game.id && (!game.available || model.running || model.runtimeBlock != nil))
-            ) {
-                if model.runningGameID == game.id {
-                    model.stop()
-                } else {
-                    model.play(game)
+            HStack(spacing: 6) {
+                PlayButton(
+                    stopping: model.runningGameID == game.id,
+                    disabled: updates.busy || (model.runningGameID != game.id && (!game.available || model.running || model.runtimeBlock != nil))
+                ) {
+                    if model.runningGameID == game.id {
+                        model.stop()
+                    } else {
+                        model.play(game)
+                    }
+                }
+                if model.settings.perGame {
+                    Button {
+                        openWindow(id: "game-settings-game", value: game.id)
+                    } label: {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(width: 22, height: 32)
+                    }
+                    .controlSize(.regular)
+                    .buttonStyle(.bordered)
+                    .help("\(game.title) settings")
+                    .accessibilityLabel("\(game.title) settings")
                 }
             }
             if !game.note.isEmpty {
@@ -1172,6 +1250,16 @@ private struct PlayButton: View {
 
 private struct PortSettingsView: View {
     @EnvironmentObject private var model: LauncherModel
+    /// nil: the shared settings; a game id: that game's own settings.
+    var gameID: String?
+
+    private var settings: Binding<PortSettings> {
+        guard let gameID else { return $model.settings }
+        return Binding(
+            get: { model.settings(for: gameID) },
+            set: { model.setSettings($0, for: gameID) }
+        )
+    }
 
     var body: some View {
         Form {
@@ -1182,7 +1270,7 @@ private struct PortSettingsView: View {
                     Text("Medium").tag("medium")
                     Text("High").tag("high")
                     Text("Ultra").tag("ultra")
-                    if model.settings.qualityPreset == "custom" {
+                    if settings.wrappedValue.qualityPreset == "custom" {
                         Text("Custom").tag("custom")
                     }
                 }
@@ -1190,7 +1278,7 @@ private struct PortSettingsView: View {
                 .labelsHidden()
             }
             labeled("Display mode") {
-                Picker("Display mode", selection: custom($model.settings.displayMode)) {
+                Picker("Display mode", selection: custom(settings.displayMode)) {
                     Text("Windowed").tag("windowed")
                     Text("Borderless").tag("borderless")
                     Text("Fullscreen").tag("fullscreen")
@@ -1199,7 +1287,7 @@ private struct PortSettingsView: View {
                 .labelsHidden()
             }
             labeled("Resolution") {
-                Picker("Resolution", selection: custom($model.settings.resolution)) {
+                Picker("Resolution", selection: custom(settings.resolution)) {
                     Text("540p").tag("960x540")
                     Text("720p").tag("1280x720")
                     Text("900p").tag("1600x900")
@@ -1212,7 +1300,7 @@ private struct PortSettingsView: View {
                 .frame(maxWidth: 160)
             }
             labeled("Aspect ratio") {
-                Picker("Aspect ratio", selection: custom($model.settings.aspect)) {
+                Picker("Aspect ratio", selection: custom(settings.aspect)) {
                     Text("16:10").tag("16:10")
                     Text("16:9").tag("16:9")
                     Text("21:9").tag("21:9")
@@ -1222,7 +1310,7 @@ private struct PortSettingsView: View {
                 .labelsHidden()
             }
             labeled("Upscaling") {
-                Picker("Upscaling", selection: custom($model.settings.upscaler)) {
+                Picker("Upscaling", selection: custom(settings.upscaler)) {
                     Text("Off").tag("off")
                     Text("FSR 1").tag("fsr1")
                     Text("FSR 3.1").tag("fsr3")
@@ -1230,9 +1318,9 @@ private struct PortSettingsView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
-            if model.settings.upscaler != "off" {
+            if settings.wrappedValue.upscaler != "off" {
                 labeled("Upscaling quality") {
-                    Picker("Upscaling quality", selection: custom($model.settings.upscale)) {
+                    Picker("Upscaling quality", selection: custom(settings.upscale)) {
                         Text("Native AA").tag("off")
                         Text("Quality").tag("quality")
                         Text("Balanced").tag("balanced")
@@ -1243,9 +1331,9 @@ private struct PortSettingsView: View {
                     .frame(maxWidth: 220)
                 }
             }
-            if model.settings.upscaler == "off" || model.settings.upscaler == "fsr1" {
+            if settings.wrappedValue.upscaler == "off" || settings.wrappedValue.upscaler == "fsr1" {
                 labeled("Anti-aliasing") {
-                    Picker("Anti-aliasing", selection: custom($model.settings.aa)) {
+                    Picker("Anti-aliasing", selection: custom(settings.aa)) {
                         Text("Off").tag("off")
                         Text("TAA").tag("taa")
                     }
@@ -1267,7 +1355,7 @@ private struct PortSettingsView: View {
                 .labelsHidden()
             }
             labeled("Frame rate limit") {
-                Picker("Frame rate limit", selection: custom($model.settings.fpsLimit)) {
+                Picker("Frame rate limit", selection: custom(settings.fpsLimit)) {
                     ForEach(["30", "40", "45", "50", "55", "60", "75", "90", "100", "120"], id: \.self) { value in
                         Text(value == "60" ? "60 ★" : value).tag(value)
                     }
@@ -1276,7 +1364,7 @@ private struct PortSettingsView: View {
                 .frame(maxWidth: 120)
             }
             labeled("Frames queued") {
-                Picker("Frames queued", selection: custom($model.settings.framesQueued)) {
+                Picker("Frames queued", selection: custom(settings.framesQueued)) {
                     Text("1 ★").tag("1")
                     Text("2").tag("2")
                     Text("Unlimited").tag("0")
@@ -1284,12 +1372,12 @@ private struct PortSettingsView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
-            Toggle("VSync", isOn: custom($model.settings.vsync))
-            Toggle("Show FPS counter", isOn: custom($model.settings.showFPS))
-            Toggle("Compile shaders in the background", isOn: custom($model.settings.asyncShaders))
-            Toggle("Multithreaded rendering (experimental)", isOn: custom($model.settings.multithreaded))
+            Toggle("VSync", isOn: custom(settings.vsync))
+            Toggle("Show FPS counter", isOn: custom(settings.showFPS))
+            Toggle("Compile shaders in the background", isOn: custom(settings.asyncShaders))
+            Toggle("Multithreaded rendering (experimental)", isOn: custom(settings.multithreaded))
             labeled("Idle game threads") {
-                Picker("Idle game threads", selection: custom($model.settings.jobSleep)) {
+                Picker("Idle game threads", selection: custom(settings.jobSleep)) {
                     Text("Sleep ★").tag("on")
                     Text("Spin").tag("off")
                 }
@@ -1299,7 +1387,7 @@ private struct PortSettingsView: View {
             }
             Section("Game") {
             labeled("Game language") {
-                Picker("Game language", selection: $model.settings.language) {
+                Picker("Game language", selection: settings.language) {
                     ForEach(languages, id: \.0) { value, name in
                         Text(name).tag(value)
                     }
@@ -1307,7 +1395,7 @@ private struct PortSettingsView: View {
                 .labelsHidden()
                 .frame(maxWidth: 260)
             }
-            Toggle("Unlock all chapters", isOn: $model.settings.unlock)
+            Toggle("Unlock all chapters", isOn: settings.unlock)
             }
         }
         .formStyle(.grouped)
@@ -1317,22 +1405,24 @@ private struct PortSettingsView: View {
 
     private var qualityBinding: Binding<String> {
         Binding(
-            get: { model.settings.qualityPreset },
-            set: { model.applyPreset($0) }
+            get: { settings.wrappedValue.qualityPreset },
+            set: { settings.wrappedValue.applyPreset($0) }
         )
     }
 
     private var sharpeningBinding: Binding<String> {
         Binding(
-            get: { model.settings.rcas ? model.settings.rcasStrength : "off" },
+            get: { settings.wrappedValue.rcas ? settings.wrappedValue.rcasStrength : "off" },
             set: { value in
+                var changed = settings.wrappedValue
                 if value == "off" {
-                    model.settings.rcas = false
+                    changed.rcas = false
                 } else {
-                    model.settings.rcas = true
-                    model.settings.rcasStrength = value
+                    changed.rcas = true
+                    changed.rcasStrength = value
                 }
-                model.markCustom()
+                changed.markCustom()
+                settings.wrappedValue = changed
             }
         )
     }
@@ -1342,7 +1432,7 @@ private struct PortSettingsView: View {
             get: { binding.wrappedValue },
             set: {
                 binding.wrappedValue = $0
-                model.markCustom()
+                settings.wrappedValue.markCustom()
             }
         )
     }
@@ -1392,7 +1482,15 @@ struct NathanDrakeCollectionApp: App {
         .defaultSize(width: 760, height: 560)
         .commands {
             CommandGroup(after: .appInfo) {
-                Button("Game Settings…") { model.showGameSettings = true }
+                if model.settings.perGame {
+                    Menu("Game Settings") {
+                        ForEach(model.games) { game in
+                            Button(game.title) { model.gameSettingsRequest = game.id }
+                        }
+                    }
+                } else {
+                    Button("Game Settings…") { model.showGameSettings = true }
+                }
                 Button("Check for Updates") { updates.check() }
                     .disabled(model.running || updates.busy)
                 Button("Open Game Save Folder") { model.openSaveFolder() }
@@ -1403,6 +1501,15 @@ struct NathanDrakeCollectionApp: App {
         Window("Game Settings", id: "game-settings") {
             PortSettingsView()
                 .environmentObject(model)
+        }
+        .defaultSize(width: 560, height: 640)
+
+        WindowGroup("Game Settings", id: "game-settings-game", for: String.self) { $gameID in
+            if let gameID {
+                PortSettingsView(gameID: gameID)
+                    .environmentObject(model)
+                    .navigationTitle("Game Settings — \(model.games.first { $0.id == gameID }?.title ?? gameID)")
+            }
         }
         .defaultSize(width: 560, height: 640)
     }

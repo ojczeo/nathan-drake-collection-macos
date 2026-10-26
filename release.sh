@@ -1,6 +1,7 @@
 #!/bin/bash
 # Build, sign, notarize, staple, make a drag-to-Applications disk image, and publish.
 # Usage: ./release.sh 1.1.1 [notes.txt]
+# PUBLISH=0 ./release.sh 1.2.0: sign, notarize, staple, and make the zip and disk image; no GitHub release.
 # The Apple ID password stays in the Keychain profile. It is not read from this file.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -97,6 +98,10 @@ submit_notary "$FINAL_DMG"
 xcrun stapler staple "$FINAL_DMG"
 xcrun stapler validate "$FINAL_DMG"
 
+if [[ "${PUBLISH:-1}" != "1" ]]; then
+    echo "Notarized $FINAL_DMG and $FINAL_ZIP (PUBLISH=0: not published)"
+    exit 0
+fi
 if [[ -n "$NOTES_FILE" ]]; then
     gh release create "v$VERSION" "$FINAL_DMG" "$FINAL_ZIP" \
         --repo truwa/nathan-drake-collection-macos \

@@ -17,6 +17,14 @@ else
     DISPLAY_NAME="Nathan Drake Collection"
     TRIAL_KEYS=""
 fi
+# The port's source (with the macOS changes) and its x86-64 dependencies: port-work/ in this
+# folder when present (not in git), else the older sibling layout.
+if [[ -z "${NATIVE_SRC:-}" && -d "$ROOT/port-work/bilal" ]]; then
+    NATIVE_SRC="$ROOT/port-work/bilal"
+fi
+if [[ -z "${SPARTAN_MACOS_DEPS:-}" && -d "$ROOT/port-work/deps" ]]; then
+    SPARTAN_MACOS_DEPS="$ROOT/port-work/deps"
+fi
 NATIVE_SRC="${NATIVE_SRC:-$(cd "$ROOT/../uncharted-bilal-work/bilal" && pwd)}"
 VERSION="${VERSION:-1.1.1}"
 BUILD="${BUILD:-$VERSION}"
@@ -52,6 +60,9 @@ cp "$DEPS/lib/libvulkan_kosmickrisp.dylib" "$NATIVE_OUT/vulkan/"
 cp "$NATIVE_SRC/tools/probe_uncharted.py" "$APP/Contents/Resources/native/tools/"
 cp "$NATIVE_SRC/gow3_pc/scripts/"*.py "$APP/Contents/Resources/native/gow3_pc/scripts/"
 printf 'bundled\n' > "$APP/Contents/Resources/native/VERSION"
+# The port's release (its git tag, e.g. v0.7.0 -> 0.7.0): window title and launcher footer.
+PORT_VERSION="${PORT_VERSION:-$(git -C "$NATIVE_SRC" describe --tags --abbrev=0 2>/dev/null || true)}"
+printf '%s\n' "${PORT_VERSION#v}" > "$APP/Contents/Resources/native/PORT_VERSION"
 printf '%s\n' "$VERSION" > "$APP/Contents/Resources/native/.bundle-stamp"
 python3 "$ROOT/macos/bundle_native.py" "$NATIVE_OUT" "$DEPS"
 # Menu bar uses the launched executable name (Windows already copies this to Uncharted.exe).

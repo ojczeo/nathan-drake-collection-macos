@@ -193,7 +193,11 @@ def inspect(dump: Path, update: Path | None) -> int:
     return 0
 
 
-def load_settings(path: Path | None) -> dict:
+# Launcher-wide options: with per-game settings these still come from the top level.
+LAUNCHER_KEYS = ("appearance", "show_log", "metal_hud", "log_level", "per_game")
+
+
+def load_settings(path: Path | None, exe: str | None = None) -> dict:
     values = {
         "display_mode": "windowed",
         "vsync": "1",
@@ -223,6 +227,13 @@ def load_settings(path: Path | None) -> dict:
         return values
     if isinstance(stored, dict):
         values.update(stored)
+        games = stored.get("games")
+        own = games.get(exe) if exe and isinstance(games, dict) else None
+        if stored.get("per_game") and isinstance(own, dict):
+            launcher = {key: values[key] for key in LAUNCHER_KEYS if key in values}
+            values.update(own)
+            values.update(launcher)
+        values.pop("games", None)
     return values
 
 
@@ -327,11 +338,17 @@ def launch(dump: Path, update: Path | None, exe: str, settings: dict) -> int:
     SUPPORT.mkdir(parents=True, exist_ok=True)
     log = SUPPORT / "native-boot.log"
     updates = ini_updates(settings)
+    # Per-game settings: only the launched game's file gets its own values.
     for key, _title, _filename, _data in GAMES:
-        write_ini(key, updates)
+        if key == exe or not settings.get("per_game"):
+            write_ini(key, updates)
     env = os.environ.copy()
     env.setdefault("ROSETTA_ADVERTISE_AVX", "1")
     env["UNCHARTED_USER_DIR"] = str(USER)
+    try:
+        env["UNCHARTED_PORT_VERSION"] = (native / "PORT_VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        env.pop("UNCHARTED_PORT_VERSION", None)
     env["UNCHARTED_DIAGNOSTICS"] = "0" if settings.get("log_level") == "errors" else "1"
     env["UNCHARTED_JOB_SLEEP"] = "0" if settings.get("job_sleep") == "off" else "1"
     env["UNCHARTED_LANGUAGE"] = str(settings.get("language", "1"))
@@ -410,7 +427,7 @@ def main() -> int:
         update = args.update.expanduser().resolve() if args.update else None
         if args.inspect:
             return inspect(dump, update)
-        settings = load_settings(args.settings)
+        settings = load_settings(args.settings, args.exe)
         if args.no_update:
             settings["no_update"] = True
             update = None
