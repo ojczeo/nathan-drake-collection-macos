@@ -8,3 +8,9 @@ macos/AppIcon.iconset/
 macos/AppIcon-source.jpg
 port-work/
 backups/
+
+# Notes for agents and local tools: kept on this Mac only, never published.
+CLAUDE.md
+docs/
+prompts/
+scripts/
