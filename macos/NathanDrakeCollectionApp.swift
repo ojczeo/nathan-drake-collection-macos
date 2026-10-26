@@ -4,9 +4,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 private enum SupportFolder {
+    /// Info.plist NDCSupportFolder (set by trial builds) keeps their data apart from the release's.
+    static let name = Bundle.main.object(forInfoDictionaryKey: "NDCSupportFolder") as? String ?? "NathanDrakeCollection"
     static let url: URL = {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/NathanDrakeCollection", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/\(name)", isDirectory: true)
     }()
 }
 
@@ -486,6 +488,7 @@ final class LauncherModel: ObservableObject {
         var env = ProcessInfo.processInfo.environment
         // Keep CPython from writing __pycache__ into the signed bundle.
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env["UNCHARTED_SUPPORT_DIR"] = SupportFolder.url.path
         let bundled = resources.appendingPathComponent("native")
         let probe = bundled.appendingPathComponent("gow3_pc/out/gow3-probe")
         let named = bundled.appendingPathComponent("gow3_pc/out/Uncharted")

@@ -2,7 +2,21 @@
 # Assemble dist/NathanDrakeCollection.app for the BilalReloaded native Mac runtime.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-APP="$ROOT/dist/NathanDrakeCollection.app"
+# TRIAL=1: a side-by-side build with its own bundle id and data folder and updates off.
+if [[ "${TRIAL:-}" == "1" ]]; then
+    APP="$ROOT/dist/NathanDrakeCollection-Trial.app"
+    BUNDLE_ID="com.macgametest.nathandrakecollection.trial"
+    DISPLAY_NAME="Nathan Drake Collection (Trial)"
+    TRIAL_KEYS="    <key>NDCSupportFolder</key>
+    <string>NathanDrakeCollection-Trial</string>
+    <key>NDCUpdatesDisabled</key>
+    <true/>"
+else
+    APP="$ROOT/dist/NathanDrakeCollection.app"
+    BUNDLE_ID="com.macgametest.nathandrakecollection"
+    DISPLAY_NAME="Nathan Drake Collection"
+    TRIAL_KEYS=""
+fi
 NATIVE_SRC="${NATIVE_SRC:-$(cd "$ROOT/../uncharted-bilal-work/bilal" && pwd)}"
 VERSION="${VERSION:-1.1.1}"
 BUILD="${BUILD:-$VERSION}"
@@ -77,11 +91,11 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.macgametest.nathandrakecollection</string>
+    <string>${BUNDLE_ID}</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleDisplayName</key>
-    <string>Nathan Drake Collection</string>
+    <string>${DISPLAY_NAME}</string>
     <key>CFBundleName</key>
     <string>NathanDrakeCollection</string>
     <key>CFBundlePackageType</key>
@@ -94,6 +108,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <string>26.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+${TRIAL_KEYS}
     <key>NSDesktopFolderUsageDescription</key>
     <string>The game folder may be on the Desktop.</string>
     <key>NSDocumentsFolderUsageDescription</key>

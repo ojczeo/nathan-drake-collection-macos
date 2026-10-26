@@ -508,6 +508,11 @@ final class AppUpdateModel: ObservableObject {
 
     func check() {
         guard !busy else { return }
+        // Trial builds (Info.plist NDCUpdatesDisabled) never replace themselves with a release.
+        if Bundle.main.object(forInfoDictionaryKey: "NDCUpdatesDisabled") as? Bool == true {
+            alert("Updates are off in this trial build.", "Install the published release separately.")
+            return
+        }
         busy = true
         phase = .checking
         let current = LauncherModel.appVersion

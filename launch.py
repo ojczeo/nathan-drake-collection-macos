@@ -17,7 +17,8 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parent
-SUPPORT = Path.home() / "Library/Application Support/NathanDrakeCollection"
+SUPPORT = Path(os.environ.get("UNCHARTED_SUPPORT_DIR") or
+               Path.home() / "Library/Application Support/NathanDrakeCollection")
 USER = SUPPORT / "user"
 
 GAMES = (
