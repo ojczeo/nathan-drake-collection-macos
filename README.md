@@ -37,3 +37,15 @@ Saves, settings, and logs stay in `~/Library/Application Support/NathanDrakeColl
 - **This launcher:** [MacGameTest](https://www.youtube.com/@MacGameTest)
 
 See `NOTICES.txt` and Credits & Licenses in the app.
+
+## Working with upstream 0.7.2 sources
+
+The native C/C++ engine is **not committed** to this macOS repository. The build uses `port-work/bilal` when present, including any locally applied macOS adaptations. To fetch the exact BilalReloaded `v0.7.2` sources and their git submodules, run from this repository's root:
+
+```bash
+bash setup_port_source.sh
+```
+
+If `port-work/bilal` does not exist, the script clones there. If it already exists, it is **never overwritten**: the script downloads the pristine upstream tree into `port-work/bilal-upstream-v0.7.2` instead. To choose a different destination, use `PORT_CHECKOUT=port-work/bilal-clean-v0.7.2 bash setup_port_source.sh`. Both directories stay excluded by `.gitignore`.
+
+**This only downloads source code.** The upstream tree is not automatically a functional macOS build. Reapply and merge the original local macOS changes, rebuild the x86-64 `gow3-probe` and `libgow3gpu.dylib`, and test on Apple Silicon before running `build_app.sh`. The Mac launcher has its own SwiftUI UI; do not replace it with the upstream Windows launcher. In particular, review the `VK_DRIVER_FILES` handling in `gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_platform.cpp` before testing renderer selection.
