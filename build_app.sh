@@ -57,10 +57,14 @@ strip -S -o "$NATIVE_OUT/gow3-probe" "$NATIVE_SRC/gow3_pc/out/gow3-probe"
 chmod +x "$NATIVE_OUT/gow3-probe"
 strip -S -o "$NATIVE_OUT/gpu/libgow3gpu.dylib" "$NATIVE_SRC/gow3_pc/out/gpu/libgow3gpu.dylib"
 cp "$DEPS/lib/libvulkan_kosmickrisp.dylib" "$NATIVE_OUT/vulkan/"
+# Optional second Vulkan-on-Metal ICD (x86-64). Default remains KosmicKrisp.
+if [[ -f "$DEPS/lib/libMoltenVK.dylib" ]]; then
+    cp "$DEPS/lib/libMoltenVK.dylib" "$NATIVE_OUT/vulkan/"
+fi
 cp "$NATIVE_SRC/tools/probe_uncharted.py" "$APP/Contents/Resources/native/tools/"
 cp "$NATIVE_SRC/gow3_pc/scripts/"*.py "$APP/Contents/Resources/native/gow3_pc/scripts/"
 printf 'bundled\n' > "$APP/Contents/Resources/native/VERSION"
-# The port's release (its git tag, e.g. v0.7.0 -> 0.7.0): window title and launcher footer.
+# The port's release (its git tag, e.g. v0.7.2 -> 0.7.2): window title and launcher footer.
 PORT_VERSION="${PORT_VERSION:-$(git -C "$NATIVE_SRC" describe --tags --abbrev=0 2>/dev/null || true)}"
 printf '%s\n' "${PORT_VERSION#v}" > "$APP/Contents/Resources/native/PORT_VERSION"
 printf '%s\n' "$VERSION" > "$APP/Contents/Resources/native/.bundle-stamp"
