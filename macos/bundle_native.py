@@ -60,7 +60,10 @@ def relocate(out: Path, prefix: Path) -> None:
     gpu = out / "gpu" / "libgow3gpu.dylib"
     probe = out / "gow3-probe"
     krisp = out / "vulkan" / "libvulkan_kosmickrisp.dylib"
+    moltenvk = out / "vulkan" / "libMoltenVK.dylib"
     queue = [probe, gpu, krisp]
+    if moltenvk.is_file():
+        queue.append(moltenvk)
     fingerprints: dict[str, bytes] = {}
     originals: dict[Path, Path] = {}
     for file in queue:
@@ -126,6 +129,13 @@ def configure_vulkan(out: Path) -> None:
         "ICD": {"library_path": "./vulkan/" + driver.name, "api_version": "1.3.0"},
     }
     (out / "kosmickrisp_mesa_icd.json").write_text(json.dumps(alias) + "\n", encoding="utf-8")
+    moltenvk = out / "vulkan" / "libMoltenVK.dylib"
+    if moltenvk.is_file():
+        moltenvk_manifest = {
+            "file_format_version": "1.0.0",
+            "ICD": {"library_path": "./vulkan/libMoltenVK.dylib", "api_version": "1.3.0"},
+        }
+        (out / "moltenvk_icd.json").write_text(json.dumps(moltenvk_manifest) + "\n", encoding="utf-8")
 
 
 def main() -> int:
