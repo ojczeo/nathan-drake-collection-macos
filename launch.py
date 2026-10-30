@@ -194,7 +194,7 @@ def inspect(dump: Path, update: Path | None) -> int:
 
 
 # Launcher-wide options: with per-game settings these still come from the top level.
-LAUNCHER_KEYS = ("appearance", "show_log", "metal_hud", "log_level", "per_game")
+LAUNCHER_KEYS = ("appearance", "show_log", "metal_hud", "log_level", "renderer", "per_game")
 
 
 def load_settings(path: Path | None, exe: str | None = None) -> dict:
@@ -217,6 +217,11 @@ def load_settings(path: Path | None, exe: str | None = None) -> dict:
         "language": "1",
         "unlock": False,
         "metal_hud": False,
+        "renderer": "kosmickrisp",
+        "anisotropy": "0",
+        "hires_shadows": False,
+        "full_res_textures": False,
+        "menu_shortcut": "lt_r3",
         "cheats": [],
     }
     if path is None or not path.is_file():
@@ -303,6 +308,7 @@ def ini_updates(settings: dict) -> dict[str, str]:
         "upscaler": upscaler,
         "preset": UPSCALE_PRESET.get(settings.get("upscale", "off"), "0"),
         "output_res": output or render,
+        "menu_shortcut": settings.get("menu_shortcut", "lt_r3") if settings.get("menu_shortcut", "lt_r3") in ("lt_r3", "view_menu", "keyboard") else "lt_r3",
     })
     return updates
 
@@ -324,6 +330,23 @@ def write_ini(game: str, updates: dict[str, str]) -> Path:
     lines += [f"{key}={value}" for key, value in updates.items() if key not in done]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def configure_renderer(native: Path, settings: dict, env: dict[str, str]) -> str:
+    """Select one bundled Vulkan ICD, without silently falling back."""
+    renderer = settings.get("renderer", "kosmickrisp")
+    manifests = {
+        "kosmickrisp": "kosmickrisp_mesa_icd.json",
+        "moltenvk": "moltenvk_icd.json",
+    }
+    if renderer not in manifests:
+        raise ValueError(f"Unknown renderer: {renderer}")
+    icd = native / "gow3_pc" / "out" / manifests[renderer]
+    if not icd.is_file():
+        raise FileNotFoundError(f"{renderer} renderer is not bundled: {icd}")
+    env["VK_DRIVER_FILES"] = str(icd)
+    env.pop("VK_ICD_FILENAMES", None)
+    return renderer
 
 
 def launch(dump: Path, update: Path | None, exe: str, settings: dict) -> int:
@@ -353,6 +376,9 @@ def launch(dump: Path, update: Path | None, exe: str, settings: dict) -> int:
     env["UNCHARTED_JOB_SLEEP"] = "0" if settings.get("job_sleep") == "off" else "1"
     env["UNCHARTED_LANGUAGE"] = str(settings.get("language", "1"))
     env["UNCHARTED_UNLOCK"] = "1" if settings.get("unlock") in (True, 1, "1") else "0"
+    env["UNCHARTED_ANISOTROPY"] = str(settings.get("anisotropy", "0")) if str(settings.get("anisotropy", "0")) in ("0", "4", "8", "16") else "0"
+    env["UNCHARTED_HIRES_SHADOWS"] = "1" if exe != "u1" and settings.get("hires_shadows") in (True, 1, "1") else "0"
+    env["UNCHARTED_FULL_RES_TEXTURES"] = "1" if exe != "u1" and settings.get("full_res_textures") in (True, 1, "1") else "0"
     cheats = settings.get("cheats") or []
     if isinstance(cheats, str):
         cheats = [part for part in cheats.split(",") if part]
@@ -374,9 +400,7 @@ def launch(dump: Path, update: Path | None, exe: str, settings: dict) -> int:
         env[f"UNCHARTED_MULTITHREADED_{key.upper()}"] = multithreaded
     if settings.get("metal_hud") in (True, 1, "1"):
         env["MTL_HUD_ENABLED"] = "1"
-    icd = native / "gow3_pc/out/kosmickrisp_mesa_icd.json"
-    if icd.is_file():
-        env.setdefault("VK_DRIVER_FILES", str(icd))
+    renderer = configure_renderer(native, settings, env)
     command = [
         sys.executable, "-u", str(native / "tools/probe_uncharted.py"),
         "--boot", "--seconds", "0", "--game", str(dump), "--executable", filename,
@@ -385,6 +409,7 @@ def launch(dump: Path, update: Path | None, exe: str, settings: dict) -> int:
     if not engine.is_file():
         engine = native / "gow3_pc/out/gow3-probe"
     print(f"Engine: native {engine}", flush=True)
+    print(f"Renderer: {renderer}", flush=True)
     print(f"Game: {dump} ({exe})", flush=True)
     if chosen:
         print(f"Update: {chosen}", flush=True)
