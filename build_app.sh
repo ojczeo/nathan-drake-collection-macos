@@ -29,6 +29,34 @@ NATIVE_SRC="${NATIVE_SRC:-$(cd "$ROOT/../uncharted-bilal-work/bilal" && pwd)}"
 VERSION="${VERSION:-1.1.1}"
 BUILD="${BUILD:-$VERSION}"
 
+# Check before deleting the previous .app: cloning upstream does not build native binaries.
+DEPS="${SPARTAN_MACOS_DEPS:-$HOME/Library/Caches/spartanport-macos-deps}"
+PROBE="$NATIVE_SRC/gow3_pc/out/gow3-probe"
+GPU_LIB="$NATIVE_SRC/gow3_pc/out/gpu/libgow3gpu.dylib"
+if [[ ! -f "$NATIVE_SRC/tools/probe_uncharted.py" ]]; then
+    echo "Missing source tool: $NATIVE_SRC/tools/probe_uncharted.py" >&2
+    echo "Check NATIVE_SRC: it must point to the BilalReloaded checkout." >&2
+    exit 1
+fi
+if [[ ! -x "$PROBE" || ! -f "$GPU_LIB" ]]; then
+    echo "Missing compiled macOS engine (a git clone is not a build):" >&2
+    [[ -x "$PROBE" ]] || echo "  $PROBE" >&2
+    [[ -f "$GPU_LIB" ]] || echo "  $GPU_LIB" >&2
+    echo "Port and rebuild the x86-64 native engine before packaging this app." >&2
+    echo "The unmodified upstream Linux/Windows build.sh is not a macOS build recipe." >&2
+    exit 1
+fi
+for binary in "$PROBE" "$GPU_LIB"; do
+    if ! /usr/bin/lipo -archs "$binary" | tr ' ' '\\n' | grep -qx x86_64; then
+        echo "Runtime must contain an x86-64 Mach-O slice: $binary" >&2
+        exit 1
+    fi
+done
+if [[ ! -f "$DEPS/lib/libvulkan_kosmickrisp.dylib" ]]; then
+    echo "KosmicKrisp missing at $DEPS. Build SpartanPort macOS deps first." >&2
+    exit 1
+fi
+
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" \
     "$APP/Contents/Resources/engine" \
@@ -41,15 +69,6 @@ cp "$ROOT/launch.py" "$ROOT/NOTICES.txt" "$APP/Contents/Resources/engine/"
 cp "$ROOT/NOTICES.txt" "$ROOT/README-macOS.txt" "$APP/Contents/Resources/"
 
 NATIVE_OUT="$APP/Contents/Resources/native/gow3_pc/out"
-DEPS="${SPARTAN_MACOS_DEPS:-$HOME/Library/Caches/spartanport-macos-deps}"
-if [[ ! -x "$NATIVE_SRC/gow3_pc/out/gow3-probe" || ! -f "$NATIVE_SRC/tools/probe_uncharted.py" ]]; then
-    echo "Native probe missing at $NATIVE_SRC (build gow3-probe first)." >&2
-    exit 1
-fi
-if [[ ! -f "$DEPS/lib/libvulkan_kosmickrisp.dylib" ]]; then
-    echo "KosmicKrisp missing at $DEPS. Build SpartanPort macOS deps first." >&2
-    exit 1
-fi
 mkdir -p "$NATIVE_OUT/gpu" "$NATIVE_OUT/vulkan" \
     "$APP/Contents/Resources/native/gow3_pc/scripts" \
     "$APP/Contents/Resources/native/tools"
