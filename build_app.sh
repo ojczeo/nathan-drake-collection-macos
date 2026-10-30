@@ -47,7 +47,7 @@ if [[ ! -x "$PROBE" || ! -f "$GPU_LIB" ]]; then
     exit 1
 fi
 for binary in "$PROBE" "$GPU_LIB"; do
-    if ! /usr/bin/lipo -archs "$binary" | tr ' ' '\\n' | grep -qx x86_64; then
+    if ! /usr/bin/lipo -archs "$binary" | grep -Eq '(^| )x86_64( |$)'; then
         echo "Runtime must contain an x86-64 Mach-O slice: $binary" >&2
         exit 1
     fi
