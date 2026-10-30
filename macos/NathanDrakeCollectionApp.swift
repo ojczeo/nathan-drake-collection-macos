@@ -42,6 +42,12 @@ struct PortSettings: Codable, Equatable {
     var appearance = "system"
     var showLog = false
     var metalHUD = false
+    /// Vulkan ICD used for every game; selectable only when bundled.
+    var renderer = "kosmickrisp"
+    var anisotropy = "0"
+    var hiresShadows = false
+    var fullResTextures = false
+    var menuShortcut = "lt_r3"
     var logLevel = "normal"
     /// Launcher options: each game keeps its own settings (games) and has its own settings window.
     var perGame = false
@@ -61,6 +67,10 @@ struct PortSettings: Codable, Equatable {
         case language, unlock, cheats, appearance
         case showLog = "show_log"
         case metalHUD = "metal_hud"
+        case renderer, anisotropy
+        case hiresShadows = "hires_shadows"
+        case fullResTextures = "full_res_textures"
+        case menuShortcut = "menu_shortcut"
         case logLevel = "log_level"
         case perGame = "per_game"
         case games
@@ -92,6 +102,11 @@ struct PortSettings: Codable, Equatable {
         appearance = try box.decodeIfPresent(String.self, forKey: .appearance) ?? "system"
         showLog = try box.decodeIfPresent(Bool.self, forKey: .showLog) ?? false
         metalHUD = try box.decodeIfPresent(Bool.self, forKey: .metalHUD) ?? false
+        renderer = try box.decodeIfPresent(String.self, forKey: .renderer) ?? "kosmickrisp"
+        anisotropy = try box.decodeIfPresent(String.self, forKey: .anisotropy) ?? "0"
+        hiresShadows = try box.decodeIfPresent(Bool.self, forKey: .hiresShadows) ?? false
+        fullResTextures = try box.decodeIfPresent(Bool.self, forKey: .fullResTextures) ?? false
+        menuShortcut = try box.decodeIfPresent(String.self, forKey: .menuShortcut) ?? "lt_r3"
         logLevel = try box.decodeIfPresent(String.self, forKey: .logLevel) ?? "normal"
         perGame = try box.decodeIfPresent(Bool.self, forKey: .perGame) ?? false
         games = try box.decodeIfPresent([String: PortSettings].self, forKey: .games)
@@ -184,6 +199,11 @@ final class LauncherModel: ObservableObject {
               let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         let version = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return version.isEmpty ? nil : version
+    }
+
+    var moltenVKAvailable: Bool {
+        let icd = Bundle.main.resourceURL?.appendingPathComponent("native/gow3_pc/out/moltenvk_icd.json")
+        return icd.map { FileManager.default.isReadableFile(atPath: $0.path) } ?? false
     }
 
     nonisolated static var appVersion: String {
@@ -1056,6 +1076,23 @@ struct ContentView: View {
                             .labelsHidden()
                             .frame(maxWidth: 280)
                         }
+                        HStack {
+                            Text("Renderer")
+                            Picker("Renderer", selection: $model.settings.renderer) {
+                                Text("KosmicKrisp (default)").tag("kosmickrisp")
+                                Text("MoltenVK (experimental)").tag("moltenvk")
+                                    .disabled(!model.moltenVKAvailable)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(maxWidth: 400)
+                            .disabled(model.running)
+                        }
+                        if !model.moltenVKAvailable {
+                            Text("MoltenVK is not included in this build.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         Toggle("Separate settings window for each game", isOn: Binding(
                             get: { model.settings.perGame },
                             set: { model.setPerGame($0) }
@@ -1490,7 +1527,31 @@ private struct PortSettingsView: View {
                 .labelsHidden()
             }
             }
+            Section("Graphics (port 0.7.2)") {
+                labeled("Texture filtering") {
+                    Picker("Texture filtering", selection: settings.anisotropy) {
+                        Text("Game").tag("0")
+                        Text("4x").tag("4")
+                        Text("8x").tag("8")
+                        Text("16x").tag("16")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+                if gameID != "u1" {
+                    Toggle("Sharper lamp shadows (Uncharted 2 and 3)", isOn: settings.hiresShadows)
+                    Toggle("Full-resolution textures (Uncharted 2 and 3)", isOn: settings.fullResTextures)
+                }
+            }
             Section("Game") {
+            labeled("In-game menu shortcut") {
+                Picker("In-game menu shortcut", selection: settings.menuShortcut) {
+                    Text("L2 + R3").tag("lt_r3")
+                    Text("Select + Start").tag("view_menu")
+                    Text("Keyboard only").tag("keyboard")
+                }
+                .labelsHidden()
+            }
             labeled("Game language") {
                 Picker("Game language", selection: settings.language) {
                     ForEach(languages, id: \.0) { value, name in
